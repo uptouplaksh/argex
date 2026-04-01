@@ -28,5 +28,5 @@ def authenticate_user(db: Session, username: str, password: str):
 
 
 def login_user(user: User):
-    token = create_access_token({"sub": user.username, "role": user.role})
+    token = create_access_token({"sub": str(user.id), "role": user.role})
     return token
