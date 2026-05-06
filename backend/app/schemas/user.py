@@ -26,6 +26,8 @@ class UserResponse(BaseModel):
     username: str
     email: EmailStr
     role: UserRole
+    cumulative_risk_score: float
+    is_suspected: bool
 
 
 class UserRoleUpdate(BaseModel):

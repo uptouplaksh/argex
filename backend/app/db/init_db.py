@@ -4,6 +4,7 @@ from backend.app.models.auction import Auction
 from backend.app.models.auto_bid import AutoBid
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
+from backend.app.models.security_incident import SecurityIncident
 from backend.app.models.seller_request import SellerRequest
 from backend.app.models.user import User
 from backend.app.models.watchlist import Watchlist
@@ -146,9 +147,26 @@ def ensure_bidding_engine_columns():
         )
 
 
+def ensure_user_risk_columns():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS cumulative_risk_score FLOAT NOT NULL DEFAULT 0.0;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_suspected BOOLEAN NOT NULL DEFAULT FALSE;
+            """
+        )
+
+
 def init_db():
     ensure_user_role_values()
     ensure_auction_status_values()
     Base.metadata.create_all(bind=engine)
     ensure_auction_category_column()
     ensure_bidding_engine_columns()
+    ensure_user_risk_columns()

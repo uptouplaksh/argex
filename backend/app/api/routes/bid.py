@@ -6,7 +6,6 @@ from backend.app.dependencies.rbac import require_role
 from backend.app.models.user import User
 
 from backend.app.api.routes.ws import manager
-from backend.app.core.security_monitor import log_request, is_suspicious
 from backend.app.schemas.bid import (
     AutoBidRequest,
     AutoBidResponse,
@@ -52,14 +51,6 @@ async def place_bid(
 ):
 
     amount = bid.amount
-    # ------------------------
-    # 🛡️ SECURITY TRACKING
-    # ------------------------
-    log_request(current_user.id)
-
-    if is_suspicious(current_user.id):
-        print(f"[ALERT] Suspicious bidding detected from user {current_user.id}")
-
     bid_record = place_bid_service(db, auction_id, amount, current_user)
 
     # ------------------------
