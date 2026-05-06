@@ -25,6 +25,7 @@ class Auction(Base):
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False, index=True)
     start_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     end_time = Column(DateTime(timezone=True), nullable=False)
+    extension_count = Column(Integer, nullable=False, default=0)
     status = Column(Enum(AuctionStatus), default=AuctionStatus.upcoming)
     seller = relationship("User")
     category = relationship("Category", back_populates="auctions")

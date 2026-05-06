@@ -1,6 +1,7 @@
 from backend.app.db.base import Base
 from backend.app.db.session import engine
 from backend.app.models.auction import Auction
+from backend.app.models.auto_bid import AutoBid
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
 from backend.app.models.seller_request import SellerRequest
@@ -123,8 +124,31 @@ def ensure_auction_category_column():
         )
 
 
+def ensure_bidding_engine_columns():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            ALTER TABLE auctions
+            ADD COLUMN IF NOT EXISTS extension_count INTEGER NOT NULL DEFAULT 0;
+
+            ALTER TABLE bids
+            ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT FALSE;
+
+            CREATE INDEX IF NOT EXISTS ix_bids_auction_created_at
+            ON bids (auction_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS ix_auto_bids_auction_active
+            ON auto_bids (auction_id, is_active);
+            """
+        )
+
+
 def init_db():
     ensure_user_role_values()
     ensure_auction_status_values()
     Base.metadata.create_all(bind=engine)
     ensure_auction_category_column()
+    ensure_bidding_engine_columns()
