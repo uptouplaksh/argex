@@ -1,3 +1,5 @@
+from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.security import hash_password, verify_password, create_access_token
@@ -6,6 +8,17 @@ from backend.app.schemas.user import UserCreate
 
 
 def register_user(db: Session, user_data: UserCreate):
+    existing_user = (
+        db.query(User)
+        .filter(
+            (User.username == user_data.username)
+            | (User.email == user_data.email)
+        )
+        .first()
+    )
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username or email already exists")
+
     user = User(
         username=user_data.username,
         email=user_data.email,
@@ -13,7 +26,12 @@ def register_user(db: Session, user_data: UserCreate):
         role=user_data.role
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Username or email already exists")
+
     db.refresh(user)
     return user
 

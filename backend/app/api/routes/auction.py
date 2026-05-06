@@ -1,14 +1,24 @@
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.core.security import get_current_user
 from backend.app.db.session import get_db
-from backend.app.models.auction import Auction, AuctionStatus
-from backend.app.schemas.auction import AuctionCreate, AuctionResponse
+from backend.app.schemas.auction import (
+    AuctionCreate,
+    AuctionResponse,
+    AuctionUpdate,
+    HighestBidResponse,
+)
+from backend.app.services.auction_service import (
+    cancel_auction,
+    create_auction as create_auction_service,
+    get_auction_or_404,
+    get_highest_bid,
+    list_auctions,
+    update_auction,
+)
 
-router = APIRouter(prefix="/auction", tags=["auction"])
+router = APIRouter(prefix="/auctions", tags=["Auctions"])
 
 
 @router.post("/", response_model=AuctionResponse)
@@ -17,37 +27,47 @@ def create_auction(
         db: Session = Depends(get_db),
         current_user=Depends(get_current_user)
 ):
-    if current_user.role != "seller":
-        raise HTTPException(status_code=403, detail="Only sellers can create auctions")
-
-    auction = Auction(
-        title=data.title,
-        description=data.description,
-        starting_price=data.starting_price,
-        current_price=data.starting_price,
-        seller_id=current_user.id,
-        start_time=datetime.now(timezone.utc),
-        end_time=data.end_time,
-        status=AuctionStatus.active
-    )
-
-    db.add(auction)
-    db.commit()
-    db.refresh(auction)
-
-    return auction
+    return create_auction_service(db, data, current_user)
 
 
 @router.get("/", response_model=list[AuctionResponse])
-def get_auctions(db: Session = Depends(get_db)):
-    return db.query(Auction).all()
+def get_auctions(category_id: int | None = None, db: Session = Depends(get_db)):
+    return list_auctions(db, category_id)
 
 
 @router.get("/{auction_id}", response_model=AuctionResponse)
 def get_auction(auction_id: int, db: Session = Depends(get_db)):
-    auction = db.query(Auction).filter(Auction.id == auction_id).first()
+    return get_auction_or_404(db, auction_id)
 
-    if not auction:
-        raise HTTPException(status_code=404, detail="Auction not found")
 
-    return auction
+@router.put("/{auction_id}", response_model=AuctionResponse)
+def edit_auction(
+        auction_id: int,
+        data: AuctionUpdate,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+):
+    return update_auction(db, auction_id, data, current_user)
+
+
+@router.delete("/{auction_id}", status_code=204)
+def delete_auction(
+        auction_id: int,
+        db: Session = Depends(get_db),
+        current_user=Depends(get_current_user),
+):
+    cancel_auction(db, auction_id, current_user)
+    return None
+
+
+@router.get("/{auction_id}/highest-bid", response_model=HighestBidResponse)
+def highest_bid(auction_id: int, db: Session = Depends(get_db)):
+    bid = get_highest_bid(db, auction_id)
+    if not bid:
+        return HighestBidResponse(auction_id=auction_id)
+    return HighestBidResponse(
+        auction_id=auction_id,
+        amount=bid.amount,
+        bidder_id=bid.bidder_id,
+        created_at=bid.created_at,
+    )

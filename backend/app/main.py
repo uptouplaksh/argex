@@ -1,9 +1,15 @@
 from fastapi import FastAPI
 
-from backend.app.api.routes import auth, auction, bid, ws
+from backend.app.api.routes import auth, auction, bid, category, watchlist, ws
 from backend.app.db.init_db import init_db
 
-app = FastAPI(title="Argex")
+app = FastAPI(
+    title="Argex",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
 
 # ------------------------
 # ROUTERS
@@ -11,6 +17,8 @@ app = FastAPI(title="Argex")
 app.include_router(auth.router)
 app.include_router(auction.router)
 app.include_router(bid.router)
+app.include_router(category.router)
+app.include_router(watchlist.router)
 app.include_router(ws.router)
 
 

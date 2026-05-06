@@ -8,6 +8,7 @@ from backend.app.db.base import Base
 class UserRole(str, enum.Enum):
     bidder = 'bidder'
     seller = 'seller'
+    admin = 'admin'
 
 
 class User(Base):

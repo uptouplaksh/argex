@@ -1,20 +1,18 @@
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.core.security import get_current_user
 from backend.app.db.session import get_db
-from backend.app.models.auction import Auction, AuctionStatus
 
 from backend.app.api.routes.ws import manager
 from backend.app.core.security_monitor import log_request, is_suspicious
-from backend.app.schemas.bid import BidRequest
+from backend.app.schemas.bid import BidRequest, BidResponse
+from backend.app.services.bid_service import place_bid as place_bid_service
 
 router = APIRouter(prefix="/bids", tags=["Bids"])
 
 
-@router.post("/{auction_id}")
+@router.post("/{auction_id}", response_model=BidResponse)
 async def place_bid(
         auction_id: int,
         bid: BidRequest,
@@ -31,36 +29,7 @@ async def place_bid(
     if is_suspicious(current_user.id):
         print(f"[ALERT] Suspicious bidding detected from user {current_user.id}")
 
-    # ------------------------
-    # ROLE CHECK
-    # ------------------------
-    if current_user.role != "bidder":
-        raise HTTPException(status_code=403, detail="Only bidders can bid")
-
-    # ------------------------
-    # DB LOCK (ANTI-RACE CONDITION)
-    # ------------------------
-    auction = db.query(Auction).filter(Auction.id == auction_id).with_for_update().first()
-
-    if not auction:
-        raise HTTPException(status_code=404, detail="Auction not found")
-
-    if auction.status != AuctionStatus.active:
-        raise HTTPException(status_code=400, detail="Auction not active")
-
-    if datetime.now(timezone.utc) > auction.end_time:
-        auction.status = AuctionStatus.ended
-        db.commit()
-        raise HTTPException(status_code=400, detail="Auction ended")
-
-    if amount <= auction.current_price:
-        raise HTTPException(status_code=400, detail="Bid must be higher than current price")
-
-    # ------------------------
-    # UPDATE PRICE
-    # ------------------------
-    auction.current_price = amount
-    db.commit()
+    bid_record = place_bid_service(db, auction_id, amount, current_user)
 
     # ------------------------
     # ⚡ REAL-TIME BROADCAST
@@ -75,4 +44,9 @@ async def place_bid(
         }
     )
 
-    return {"message": "Bid placed successfully", "new_price": amount}
+    return BidResponse(
+        auction_id=auction_id,
+        new_price=amount,
+        bidder_id=current_user.id,
+        created_at=bid_record.created_at,
+    )
