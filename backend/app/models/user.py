@@ -21,3 +21,4 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False, default=UserRole.bidder)
     cumulative_risk_score = Column(Float, nullable=False, default=0.0)
     is_suspected = Column(Boolean, nullable=False, default=False)
+    is_blocked = Column(Boolean, nullable=False, default=False)

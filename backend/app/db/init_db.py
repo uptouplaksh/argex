@@ -4,6 +4,7 @@ from backend.app.models.auction import Auction
 from backend.app.models.auto_bid import AutoBid
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
+from backend.app.models.defender_log import DefenderActionLog  # noqa: F401 – registers table
 from backend.app.models.security_incident import SecurityIncident
 from backend.app.models.seller_request import SellerRequest
 from backend.app.models.user import User
@@ -163,10 +164,50 @@ def ensure_user_risk_columns():
         )
 
 
+def ensure_user_blocked_column():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN NOT NULL DEFAULT FALSE;
+            """
+        )
+
+
+def ensure_defender_action_type_enum():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_type WHERE typname = 'defenderactiontype'
+                ) THEN
+                    CREATE TYPE defenderactiontype AS ENUM ('block', 'unblock', 'resolve', 'reopen');
+                ELSE
+                    ALTER TYPE defenderactiontype ADD VALUE IF NOT EXISTS 'block';
+                    ALTER TYPE defenderactiontype ADD VALUE IF NOT EXISTS 'unblock';
+                    ALTER TYPE defenderactiontype ADD VALUE IF NOT EXISTS 'resolve';
+                    ALTER TYPE defenderactiontype ADD VALUE IF NOT EXISTS 'reopen';
+                END IF;
+            END
+            $$;
+            """
+        )
+
+
 def init_db():
     ensure_user_role_values()
     ensure_auction_status_values()
+    ensure_defender_action_type_enum()
     Base.metadata.create_all(bind=engine)
     ensure_auction_category_column()
     ensure_bidding_engine_columns()
     ensure_user_risk_columns()
+    ensure_user_blocked_column()
