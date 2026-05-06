@@ -3,6 +3,7 @@ from backend.app.db.session import engine
 from backend.app.models.auction import Auction
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
+from backend.app.models.seller_request import SellerRequest
 from backend.app.models.user import User
 from backend.app.models.watchlist import Watchlist
 
@@ -21,7 +22,19 @@ def ensure_user_role_values():
                     FROM pg_type
                     WHERE typname = 'userrole'
                 ) THEN
+                    ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'bidder';
+                    ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'seller';
                     ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'admin';
+                    ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'defender';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_name = 'users'
+                ) THEN
+                    ALTER TABLE users
+                    ALTER COLUMN role SET DEFAULT 'bidder';
                 END IF;
             END
             $$;

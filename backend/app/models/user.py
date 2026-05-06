@@ -9,6 +9,7 @@ class UserRole(str, enum.Enum):
     bidder = 'bidder'
     seller = 'seller'
     admin = 'admin'
+    defender = 'defender'
 
 
 class User(Base):
@@ -17,4 +18,4 @@ class User(Base):
     username = Column(String, unique=True, index=True, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(Enum(UserRole), nullable=False)
+    role = Column(Enum(UserRole), nullable=False, default=UserRole.bidder)

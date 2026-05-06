@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.app.core.security import hash_password, verify_password, create_access_token
-from backend.app.models.user import User
+from backend.app.models.user import User, UserRole
 from backend.app.schemas.user import UserCreate
 
 
@@ -23,7 +23,7 @@ def register_user(db: Session, user_data: UserCreate):
         username=user_data.username,
         email=user_data.email,
         password_hash=hash_password(user_data.password),
-        role=user_data.role
+        role=UserRole.bidder,
     )
     db.add(user)
     try:
@@ -46,5 +46,6 @@ def authenticate_user(db: Session, username: str, password: str):
 
 
 def login_user(user: User):
-    token = create_access_token({"sub": str(user.id), "role": user.role})
+    role = user.role.value if isinstance(user.role, UserRole) else user.role
+    token = create_access_token({"sub": str(user.id), "role": role})
     return token

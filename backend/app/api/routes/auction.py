@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from backend.app.core.security import get_current_user
 from backend.app.db.session import get_db
+from backend.app.dependencies.rbac import require_role
+from backend.app.models.user import User
 from backend.app.schemas.auction import (
     AuctionCreate,
     AuctionResponse,
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/auctions", tags=["Auctions"])
 def create_auction(
         data: AuctionCreate,
         db: Session = Depends(get_db),
-        current_user=Depends(get_current_user)
+        current_user: User = Depends(require_role(["seller"])),
 ):
     return create_auction_service(db, data, current_user)
 
@@ -45,7 +46,7 @@ def edit_auction(
         auction_id: int,
         data: AuctionUpdate,
         db: Session = Depends(get_db),
-        current_user=Depends(get_current_user),
+        current_user: User = Depends(require_role(["seller"])),
 ):
     return update_auction(db, auction_id, data, current_user)
 
@@ -54,7 +55,7 @@ def edit_auction(
 def delete_auction(
         auction_id: int,
         db: Session = Depends(get_db),
-        current_user=Depends(get_current_user),
+        current_user: User = Depends(require_role(["seller"])),
 ):
     cancel_auction(db, auction_id, current_user)
     return None

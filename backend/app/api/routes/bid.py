@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from backend.app.core.security import get_current_user
 from backend.app.db.session import get_db
+from backend.app.dependencies.rbac import require_role
+from backend.app.models.user import User
 
 from backend.app.api.routes.ws import manager
 from backend.app.core.security_monitor import log_request, is_suspicious
@@ -17,7 +18,7 @@ async def place_bid(
         auction_id: int,
         bid: BidRequest,
         db: Session = Depends(get_db),
-        current_user=Depends(get_current_user)
+        current_user: User = Depends(require_role(["bidder"])),
 ):
 
     amount = bid.amount
