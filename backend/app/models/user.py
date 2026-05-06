@@ -1,6 +1,7 @@
 import enum
 
 from sqlalchemy import Boolean, Column, Float, Integer, String, Enum
+from sqlalchemy.orm import relationship
 
 from backend.app.db.base import Base
 
@@ -22,3 +23,5 @@ class User(Base):
     cumulative_risk_score = Column(Float, nullable=False, default=0.0)
     is_suspected = Column(Boolean, nullable=False, default=False)
     is_blocked = Column(Boolean, nullable=False, default=False)
+
+    notifications = relationship("Notification", back_populates="user")

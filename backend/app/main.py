@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from backend.app.api.routes import admin, auth, auction, bid, category, defender, roles, watchlist, ws
+from backend.app.api.routes import admin, auth, auction, bid, category, defender, roles, watchlist, ws, notifications
 from backend.app.db.init_db import init_db
 
 app = FastAPI(
@@ -23,6 +23,7 @@ app.include_router(bid.router)
 app.include_router(category.router)
 app.include_router(watchlist.router)
 app.include_router(ws.router)
+app.include_router(notifications.router)
 
 
 # ------------------------

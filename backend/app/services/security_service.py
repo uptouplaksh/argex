@@ -11,6 +11,7 @@ from backend.app.models.security_incident import (
     SecurityIncident,
 )
 from backend.app.models.user import User
+from backend.app.services import logging_service, notification_service
 
 INCIDENT_THRESHOLD = 50
 HIGH_SEVERITY_THRESHOLD = 71
@@ -174,7 +175,27 @@ def create_incident(
     db.add(incident)
     db.flush()
 
+    logging_service.log_action(
+        db=db,
+        user_id=user_id,
+        action_type="CREATE_SECURITY_INCIDENT",
+        entity_type="SECURITY_INCIDENT",
+        entity_id=incident.id,
+        details={
+            "risk_score": risk_score,
+            "severity": severity.value,
+            "incident_type": incident_type,
+            "auction_id": auction_id,
+        },
+    )
+
     if severity == IncidentSeverity.high:
+        notification_service.create_notification(
+            db=db,
+            user_id=user_id,
+            type="HIGH_SEVERITY_SECURITY_INCIDENT",
+            message=f"A high-severity security incident of type '{incident_type}' was detected on your account. Please review your recent activity.",
+        )
         print(
             "[SECURITY ALERT] "
             f"user={user_id} auction={auction_id} type={incident_type} score={risk_score}"

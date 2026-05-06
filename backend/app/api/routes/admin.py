@@ -6,8 +6,9 @@ from backend.app.dependencies.rbac import require_role
 from backend.app.models.user import User
 from backend.app.schemas.seller_request import SellerRequestResponse
 from backend.app.schemas.user import UserResponse, UserRoleUpdate
-from backend.app.services.admin_service import list_users, update_user_role
-from backend.app.services.role_service import (
+from backend.app.services.admin_service import (
+    list_users,
+    update_user_role,
     approve_seller_request,
     list_seller_requests,
     reject_seller_request,
@@ -44,13 +45,21 @@ def get_seller_requests(db: Session = Depends(get_db)):
     "/seller-requests/{request_id}/approve",
     response_model=SellerRequestResponse,
 )
-def approve_request(request_id: int, db: Session = Depends(get_db)):
-    return approve_seller_request(db, request_id)
+def approve_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["admin"])),
+):
+    return approve_seller_request(db, request_id, current_user)
 
 
 @router.post(
     "/seller-requests/{request_id}/reject",
     response_model=SellerRequestResponse,
 )
-def reject_request(request_id: int, db: Session = Depends(get_db)):
-    return reject_seller_request(db, request_id)
+def reject_request(
+    request_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["admin"])),
+):
+    return reject_seller_request(db, request_id, current_user)

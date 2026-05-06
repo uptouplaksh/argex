@@ -20,5 +20,5 @@ def login(user: UserLogin, db: Session = Depends(get_db)):
     if not db_user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = login_user(db_user)
+    token = login_user(db, db_user)
     return {"access_token": token}

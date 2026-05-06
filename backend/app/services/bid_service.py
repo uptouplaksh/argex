@@ -7,6 +7,7 @@ from backend.app.models.auto_bid import AutoBid
 from backend.app.models.auction import Auction, AuctionStatus
 from backend.app.models.bid import Bid
 from backend.app.services.security_service import evaluate_bid_risk
+from backend.app.services import logging_service, notification_service
 
 BID_INCREMENT = 1.0
 ANTI_SNIPE_THRESHOLD_MINUTES = 2
@@ -82,6 +83,9 @@ def record_bid(
         now: datetime,
         is_auto: bool,
 ) -> Bid:
+    highest_bid_before = get_highest_bid(db, auction.id)
+    outbid_user_id = highest_bid_before.bidder_id if highest_bid_before and highest_bid_before.bidder_id != bidder_id else None
+
     bid = Bid(
         amount=amount,
         bidder_id=bidder_id,
@@ -93,6 +97,15 @@ def record_bid(
     maybe_extend_auction(auction, now)
     db.add(bid)
     db.flush()
+
+    if outbid_user_id:
+        notification_service.create_notification(
+            db=db,
+            user_id=outbid_user_id,
+            type="OUTBID",
+            message=f"You have been outbid in the auction for '{auction.title}'. The new bid is ${bid.amount}."
+        )
+
     return bid
 
 
@@ -158,6 +171,14 @@ def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | Non
             now,
             is_auto=True,
         )
+        logging_service.log_action(
+            db=db,
+            user_id=auto_bid.user_id,
+            action_type="AUTO_BID_EXECUTION",
+            entity_type="AUCTION",
+            entity_id=auction.id,
+            details={"amount": final_bid.amount, "is_auto": True}
+        )
         evaluate_bid_risk(
             db,
             auto_bid.user,
@@ -197,6 +218,14 @@ def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid:
     previous_price = auction.current_price
     original_end_time = auction.end_time
     bid = record_bid(db, auction, current_user.id, amount, now, is_auto=False)
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="PLACE_BID",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+        details={"amount": amount, "is_auto": False}
+    )
     evaluate_bid_risk(
         db,
         current_user,
@@ -264,6 +293,15 @@ def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:
         )
         db.add(auto_bid)
         db.flush()
+
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="SETUP_AUTO_BID",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+        details={"max_bid": data.max_bid, "is_active": auto_bid.is_active}
+    )
 
     if auto_bid.is_active:
         process_auto_bids(db, auction, now)

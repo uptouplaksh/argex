@@ -10,6 +10,7 @@ from backend.app.models.security_incident import (
 )
 from backend.app.models.user import User
 from backend.app.schemas.defender import SeverityCount, UserRiskProfile
+from backend.app.services import logging_service, notification_service
 
 RISK_PROFILE_LATEST_COUNT = 10
 
@@ -71,6 +72,14 @@ def block_user(db: Session, target_user_id: int, defender_id: int) -> User:
 
     user.is_blocked = True
     _log_action(db, defender_id, DefenderActionType.block, target_user_id=target_user_id)
+    
+    notification_service.create_notification(
+        db=db,
+        user_id=target_user_id,
+        type="USER_BLOCKED",
+        message="Your account has been blocked by a defender due to suspicious activity.",
+    )
+    
     db.commit()
     db.refresh(user)
     return user
@@ -83,6 +92,14 @@ def unblock_user(db: Session, target_user_id: int, defender_id: int) -> User:
 
     user.is_blocked = False
     _log_action(db, defender_id, DefenderActionType.unblock, target_user_id=target_user_id)
+    
+    notification_service.create_notification(
+        db=db,
+        user_id=target_user_id,
+        type="USER_UNBLOCKED",
+        message="Your account has been unblocked by a defender.",
+    )
+    
     db.commit()
     db.refresh(user)
     return user
@@ -160,4 +177,14 @@ def _log_action(
     )
     db.add(entry)
     db.flush()
+
+    logging_service.log_action(
+        db=db,
+        user_id=defender_id,
+        action_type=f"DEFENDER_{action_type.value}",
+        entity_type="USER" if target_user_id else "SECURITY_INCIDENT",
+        entity_id=target_user_id or incident_id,
+        details={"defender_id": defender_id, "target_user_id": target_user_id, "incident_id": incident_id},
+    )
+
     return entry

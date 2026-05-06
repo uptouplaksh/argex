@@ -7,6 +7,7 @@ from backend.app.models.auction import Auction, AuctionStatus
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
 from backend.app.schemas.auction import AuctionCreate, AuctionUpdate
+from backend.app.services import logging_service
 
 
 def utc_now() -> datetime:
@@ -62,6 +63,17 @@ def create_auction(db: Session, data: AuctionCreate, current_user) -> Auction:
     )
 
     db.add(auction)
+    db.flush()
+
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="CREATE_AUCTION",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+        details=data.model_dump(),
+    )
+
     db.commit()
     db.refresh(auction)
     return auction
@@ -96,6 +108,15 @@ def update_auction(db: Session, auction_id: int, data: AuctionUpdate, current_us
         auction.starting_price = update_data["starting_price"]
         auction.current_price = update_data["starting_price"]
 
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="UPDATE_AUCTION",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+        details=update_data,
+    )
+
     db.commit()
     db.refresh(auction)
     return auction
@@ -120,6 +141,15 @@ def cancel_auction(db: Session, auction_id: int, current_user) -> None:
         raise HTTPException(status_code=400, detail="Auction cannot be cancelled after bids exist")
 
     auction.status = AuctionStatus.cancelled
+
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="CANCEL_AUCTION",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+    )
+
     db.commit()
 
 
