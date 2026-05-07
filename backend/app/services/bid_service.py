@@ -1,3 +1,5 @@
+import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
@@ -7,7 +9,8 @@ from backend.app.models.auto_bid import AutoBid
 from backend.app.models.auction import Auction, AuctionStatus
 from backend.app.models.bid import Bid
 from backend.app.services.security_service import evaluate_bid_risk
-from backend.app.services import logging_service, notification_service
+from backend.app.services import logging_service, notification_service, auction_service # Added auction_service
+from backend.app.services.websocket_manager import manager
 
 BID_INCREMENT = 1.0
 ANTI_SNIPE_THRESHOLD_MINUTES = 2
@@ -60,7 +63,7 @@ def ensure_auction_accepts_bids(auction: Auction, now: datetime) -> None:
         raise HTTPException(status_code=400, detail="Auction ended")
 
 
-def maybe_extend_auction(auction: Auction, now: datetime) -> None:
+async def maybe_extend_auction(auction: Auction, now: datetime) -> None: # Made async
     if auction.status != AuctionStatus.active:
         return
 
@@ -73,9 +76,17 @@ def maybe_extend_auction(auction: Auction, now: datetime) -> None:
     if now >= threshold_time:
         auction.end_time = end_time + timedelta(minutes=ANTI_SNIPE_EXTENSION_MINUTES)
         auction.extension_count = extension_count + 1
+        
+        # Broadcast TIME_EXTENDED event
+        message = {
+            "type": "TIME_EXTENDED",
+            "auction_id": auction.id,
+            "new_end_time": auction.end_time.isoformat(),
+        }
+        await manager.broadcast(auction.id, json.dumps(message))
 
 
-def record_bid(
+async def record_bid( # Already async
         db: Session,
         auction: Auction,
         bidder_id: int,
@@ -94,7 +105,7 @@ def record_bid(
         is_auto=is_auto,
     )
     auction.current_price = amount
-    maybe_extend_auction(auction, now)
+    await maybe_extend_auction(auction, now) # Await maybe_extend_auction
     db.add(bid)
     db.flush()
 
@@ -105,6 +116,25 @@ def record_bid(
             type="OUTBID",
             message=f"You have been outbid in the auction for '{auction.title}'. The new bid is ${bid.amount}."
         )
+        # Broadcast OUTBID event
+        outbid_message = {
+            "type": "OUTBID",
+            "auction_id": auction.id,
+            "user_id": outbid_user_id,
+            "new_highest_bid": bid.amount,
+            "timestamp": now.isoformat(),
+        }
+        await manager.broadcast(auction.id, json.dumps(outbid_message))
+
+    # Existing NEW_BID broadcast
+    new_bid_message = {
+        "type": "NEW_BID",
+        "auction_id": auction.id,
+        "amount": bid.amount,
+        "bidder_id": bid.bidder_id,
+        "timestamp": bid.created_at.isoformat(),
+    }
+    await manager.broadcast(auction.id, json.dumps(new_bid_message))
 
     return bid
 
@@ -131,7 +161,7 @@ def sync_auto_bid_after_bid(
         auto_bid.is_active = False
 
 
-def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | None:
+async def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | None: # Already async
     final_bid = get_highest_bid(db, auction.id)
 
     for iteration in range(1, MAX_AUTO_BID_ITERATIONS + 1):
@@ -163,7 +193,7 @@ def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | Non
 
         previous_price = auction.current_price
         original_end_time = auction.end_time
-        final_bid = record_bid(
+        final_bid = await record_bid( # Await record_bid
             db,
             auction,
             auto_bid.user_id,
@@ -195,10 +225,14 @@ def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | Non
         if auto_bid.current_bid >= auto_bid.max_bid:
             auto_bid.is_active = False
 
+    # Check if auction ended after processing bid and potential extension
+    if ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
+        await auction_service.handle_auction_end(db, auction) # Call new function
+
     raise HTTPException(status_code=400, detail="Auto-bid processing limit reached")
 
 
-def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid:
+async def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid: # Already async
     if getattr(current_user, "is_blocked", False):
         raise HTTPException(status_code=403, detail="Your account has been blocked")
 
@@ -217,7 +251,7 @@ def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid:
 
     previous_price = auction.current_price
     original_end_time = auction.end_time
-    bid = record_bid(db, auction, current_user.id, amount, now, is_auto=False)
+    bid = await record_bid(db, auction, current_user.id, amount, now, is_auto=False) # Await record_bid
     logging_service.log_action(
         db=db,
         user_id=current_user.id,
@@ -237,14 +271,18 @@ def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid:
         is_auto=False,
     )
     sync_auto_bid_after_bid(db, auction.id, current_user.id, amount)
-    final_bid = process_auto_bids(db, auction, now) or bid
+    final_bid = await process_auto_bids(db, auction, now) or bid
+
+    # Check if auction ended after processing bid and potential extension
+    if ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
+        await auction_service.handle_auction_end(db, auction) # Call new function
 
     db.commit()
     db.refresh(final_bid)
     return final_bid
 
 
-def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:
+async def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid: # Already async
     if getattr(current_user, "is_blocked", False):
         raise HTTPException(status_code=403, detail="Your account has been blocked")
 
@@ -304,7 +342,10 @@ def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:
     )
 
     if auto_bid.is_active:
-        process_auto_bids(db, auction, now)
+        final_bid = await process_auto_bids(db, auction, now) # Await process_auto_bids
+        # Check if auction ended after processing auto-bids
+        if final_bid and ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
+            await auction_service.handle_auction_end(db, auction)
 
     db.commit()
     db.refresh(auto_bid)

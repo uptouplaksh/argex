@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
@@ -8,6 +9,7 @@ from backend.app.models.bid import Bid
 from backend.app.models.category import Category
 from backend.app.schemas.auction import AuctionCreate, AuctionUpdate
 from backend.app.services import logging_service
+from backend.app.services.websocket_manager import manager
 
 
 def utc_now() -> datetime:
@@ -160,4 +162,32 @@ def get_highest_bid(db: Session, auction_id: int) -> Bid | None:
         .filter(Bid.auction_id == auction_id)
         .order_by(Bid.amount.desc(), Bid.created_at.asc())
         .first()
+    )
+
+
+async def handle_auction_end(db: Session, auction: Auction):
+    if auction.status == AuctionStatus.ended:
+        return
+
+    auction.status = AuctionStatus.ended
+    highest_bid = get_highest_bid(db, auction.id)
+
+    winner_id = highest_bid.bidder_id if highest_bid else None
+    final_price = highest_bid.amount if highest_bid else auction.current_price
+
+    message = {
+        "type": "AUCTION_ENDED",
+        "auction_id": auction.id,
+        "winner_id": winner_id,
+        "final_price": final_price,
+    }
+    await manager.broadcast(auction.id, json.dumps(message))
+
+    logging_service.log_action(
+        db=db,
+        user_id=None,  # System action
+        action_type="AUCTION_ENDED",
+        entity_type="AUCTION",
+        entity_id=auction.id,
+        details={"winner_id": winner_id, "final_price": final_price},
     )

@@ -5,7 +5,6 @@ from backend.app.db.session import get_db
 from backend.app.dependencies.rbac import require_role
 from backend.app.models.user import User
 
-from backend.app.api.routes.ws import manager
 from backend.app.schemas.bid import (
     AutoBidRequest,
     AutoBidResponse,
@@ -25,12 +24,12 @@ router = APIRouter(prefix="/bids", tags=["Bids"])
 
 
 @router.post("/auto", response_model=AutoBidResponse)
-def upsert_auto_bid(
+async def upsert_auto_bid(
         data: AutoBidRequest,
         db: Session = Depends(get_db),
         current_user: User = Depends(require_role(["bidder"])),
 ):
-    return create_or_update_auto_bid(db, data, current_user)
+    return await create_or_update_auto_bid(db, data, current_user)
 
 
 @router.get("/auto/{auction_id}", response_model=AutoBidResponse)
@@ -49,23 +48,8 @@ async def place_bid(
         db: Session = Depends(get_db),
         current_user: User = Depends(require_role(["bidder"])),
 ):
-
     amount = bid.amount
-    bid_record = place_bid_service(db, auction_id, amount, current_user)
-
-    # ------------------------
-    # ⚡ REAL-TIME BROADCAST
-    # ------------------------
-    await manager.broadcast(
-        auction_id,
-        {
-            "type": "new_bid",
-            "auction_id": auction_id,
-            "new_price": bid_record.amount,
-            "user_id": bid_record.bidder_id,
-            "is_auto": bid_record.is_auto,
-        }
-    )
+    bid_record = await place_bid_service(db, auction_id, amount, current_user)
 
     return BidResponse(
         auction_id=auction_id,

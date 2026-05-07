@@ -1,7 +1,9 @@
+import asyncio
 from fastapi import FastAPI
 
 from backend.app.api.routes import admin, auth, auction, bid, category, defender, roles, watchlist, ws, notifications
 from backend.app.db.init_db import init_db
+from backend.app.services.websocket_manager import manager
 
 app = FastAPI(
     title="Argex",
@@ -30,5 +32,7 @@ app.include_router(notifications.router)
 # STARTUP EVENT
 # ------------------------
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     init_db()
+    # Start the WebSocket heartbeat in the background
+    asyncio.create_task(manager.start_heartbeat())
