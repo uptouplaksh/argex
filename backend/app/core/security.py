@@ -6,7 +6,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt
 from sqlalchemy.orm import Session
 
-from backend.app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from backend.app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, LOGIN_OTP_ENABLED
 from backend.app.db.session import get_db
 from backend.app.models.user import User
 
@@ -87,5 +87,8 @@ def get_current_user(
 
     if user is None:
         raise credentials_exception
+
+    if LOGIN_OTP_ENABLED and not getattr(user, "is_verified", False):
+        raise HTTPException(status_code=403, detail="Account verification required")
 
     return user

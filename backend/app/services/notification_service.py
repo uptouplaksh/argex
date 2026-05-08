@@ -17,7 +17,12 @@ def get_user_notifications(db: Session, user_id: int) -> List[Notification]:
     """
     Retrieves all notifications for a specific user.
     """
-    return db.query(Notification).filter(Notification.user_id == user_id).all()
+    return (
+        db.query(Notification)
+        .filter(Notification.user_id == user_id)
+        .order_by(Notification.created_at.desc(), Notification.id.desc())
+        .all()
+    )
 
 def mark_notification_as_read(db: Session, notification_id: int) -> Notification:
     """

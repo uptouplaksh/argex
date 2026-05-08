@@ -8,7 +8,8 @@ from backend.app.models.auction import Auction, AuctionStatus
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
 from backend.app.schemas.auction import AuctionCreate, AuctionUpdate
-from backend.app.services import logging_service
+from backend.app.services import logging_service, wallet_service
+from backend.app.services.currency_service import convert_to_usd, normalize_currency
 from backend.app.services.websocket_manager import manager
 
 
@@ -30,10 +31,19 @@ def get_auction_or_404(db: Session, auction_id: int) -> Auction:
 
 
 def list_auctions(db: Session, category_id: int | None = None) -> list[Auction]:
-    query = db.query(Auction).filter(Auction.status != AuctionStatus.cancelled)
+    query = db.query(Auction)
     if category_id is not None:
         query = query.filter(Auction.category_id == category_id)
     return query.all()
+
+
+def list_user_auctions(db: Session, current_user) -> list[Auction]:
+    return (
+        db.query(Auction)
+        .filter(Auction.seller_id == current_user.id)
+        .order_by(Auction.start_time.desc(), Auction.id.desc())
+        .all()
+    )
 
 
 def create_auction(db: Session, data: AuctionCreate, current_user) -> Auction:
@@ -47,16 +57,19 @@ def create_auction(db: Session, data: AuctionCreate, current_user) -> Auction:
     now = utc_now()
     start_time = ensure_aware_utc(data.start_time) if data.start_time else now
     end_time = ensure_aware_utc(data.end_time)
+    auction_currency = normalize_currency(data.auction_currency or getattr(current_user, "preferred_currency", None) or "USD")
     if data.starting_price <= 0:
         raise HTTPException(status_code=400, detail="Starting price must be greater than zero")
+    starting_price_usd = convert_to_usd(data.starting_price, auction_currency)
     if end_time <= start_time:
         raise HTTPException(status_code=400, detail="Auction end time must be after start time")
 
     auction = Auction(
         title=data.title,
         description=data.description,
-        starting_price=data.starting_price,
-        current_price=data.starting_price,
+        starting_price=starting_price_usd,
+        current_price=starting_price_usd,
+        auction_currency=auction_currency,
         seller_id=current_user.id,
         category_id=data.category_id,
         start_time=start_time,
@@ -73,7 +86,7 @@ def create_auction(db: Session, data: AuctionCreate, current_user) -> Auction:
         action_type="CREATE_AUCTION",
         entity_type="AUCTION",
         entity_id=auction.id,
-        details=data.model_dump(),
+        details=data.model_dump(mode="json"),
     )
 
     db.commit()
@@ -87,28 +100,44 @@ def update_auction(db: Session, auction_id: int, data: AuctionUpdate, current_us
     if auction.seller_id != current_user.id:
         raise HTTPException(status_code=403, detail="Only the auction seller can edit this auction")
 
-    if auction.status != AuctionStatus.upcoming or ensure_aware_utc(auction.start_time) <= utc_now():
-        raise HTTPException(status_code=400, detail="Auction cannot be edited after it has started")
+    now = utc_now()
+    if auction.status in (AuctionStatus.cancelled, AuctionStatus.ended) or ensure_aware_utc(auction.end_time) <= now:
+        auction.status = AuctionStatus.ended if auction.status != AuctionStatus.cancelled else auction.status
+        db.commit()
+        raise HTTPException(status_code=400, detail="Auction cannot be edited after it has ended or been cancelled")
 
     update_data = data.model_dump(exclude_unset=True)
+    has_bids = db.query(Bid.id).filter(Bid.auction_id == auction_id).first() is not None
+    next_currency = auction.auction_currency or "USD"
 
     if "end_time" in update_data and update_data["end_time"] is not None:
         new_end_time = ensure_aware_utc(update_data["end_time"])
-        current_end_time = ensure_aware_utc(auction.end_time)
-        if new_end_time < current_end_time:
-            raise HTTPException(status_code=400, detail="Auction end time cannot be shortened")
-        if new_end_time > current_end_time:
-            auction.end_time = new_end_time
+        if new_end_time <= now:
+            raise HTTPException(status_code=400, detail="Auction end time must be in the future")
+        auction.end_time = new_end_time
 
     if "title" in update_data and update_data["title"] is not None:
         auction.title = update_data["title"]
     if "description" in update_data:
         auction.description = update_data["description"]
+    if "category_id" in update_data and update_data["category_id"] is not None:
+        category = db.query(Category).filter(Category.id == update_data["category_id"]).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Category not found")
+        auction.category_id = update_data["category_id"]
+    if "auction_currency" in update_data and update_data["auction_currency"] is not None:
+        if has_bids:
+            raise HTTPException(status_code=400, detail="Auction currency cannot be modified after bidding has started")
+        next_currency = normalize_currency(update_data["auction_currency"])
+        auction.auction_currency = next_currency
     if "starting_price" in update_data and update_data["starting_price"] is not None:
+        if has_bids:
+            raise HTTPException(status_code=400, detail="Starting price cannot be modified after bidding has started")
         if update_data["starting_price"] <= 0:
             raise HTTPException(status_code=400, detail="Starting price must be greater than zero")
-        auction.starting_price = update_data["starting_price"]
-        auction.current_price = update_data["starting_price"]
+        starting_price_usd = convert_to_usd(update_data["starting_price"], next_currency)
+        auction.starting_price = starting_price_usd
+        auction.current_price = starting_price_usd
 
     logging_service.log_action(
         db=db,
@@ -137,10 +166,6 @@ def cancel_auction(db: Session, auction_id: int, current_user) -> None:
         auction.status = AuctionStatus.ended
         db.commit()
         raise HTTPException(status_code=400, detail="Auction already ended")
-
-    has_bids = db.query(Bid.id).filter(Bid.auction_id == auction_id).first()
-    if has_bids:
-        raise HTTPException(status_code=400, detail="Auction cannot be cancelled after bids exist")
 
     auction.status = AuctionStatus.cancelled
 
@@ -174,11 +199,13 @@ async def handle_auction_end(db: Session, auction: Auction):
 
     winner_id = highest_bid.bidder_id if highest_bid else None
     final_price = highest_bid.amount if highest_bid else auction.current_price
+    wallet_service.settle_auction(db, auction, highest_bid)
 
     message = {
         "type": "AUCTION_ENDED",
         "auction_id": auction.id,
         "winner_id": winner_id,
+        "winner_username": highest_bid.bidder.username if highest_bid and highest_bid.bidder else None,
         "final_price": final_price,
     }
     await manager.broadcast(auction.id, json.dumps(message))

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app import schemas
 from backend.app.api import deps
 from backend.app.core.security import get_current_user
+from backend.app.models.notification import Notification
 from backend.app.models.user import User
 from backend.app.services import notification_service
 
@@ -36,11 +37,11 @@ def mark_notification_as_read(
     """
     Mark a notification as read.
     """
-    notification = notification_service.mark_notification_as_read(
-        db, notification_id=notification_id
+    notification = (
+        db.query(Notification)
+        .filter(Notification.id == notification_id, Notification.user_id == current_user.id)
+        .first()
     )
     if not notification:
         raise HTTPException(status_code=404, detail="Notification not found")
-    if notification.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Not authorized to mark this notification as read")
-    return notification
+    return notification_service.mark_notification_as_read(db, notification_id=notification_id)

@@ -10,7 +10,7 @@ from backend.app.services.security_service import list_incidents, resolve_incide
 router = APIRouter(
     prefix="/security",
     tags=["Security"],
-    dependencies=[Depends(require_role(["admin", "defender"]))],
+    dependencies=[Depends(require_role(["defender"]))],
 )
 
 

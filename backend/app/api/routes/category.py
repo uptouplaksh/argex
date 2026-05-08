@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 from backend.app.db.session import get_db
 from backend.app.dependencies.rbac import require_role
 from backend.app.models.user import User
-from backend.app.schemas.category import CategoryCreate, CategoryResponse
-from backend.app.services.category_service import create_category, list_categories
+from backend.app.schemas.category import CategoryCreate, CategoryResponse, CategoryUpdate
+from backend.app.services.category_service import create_category, delete_category, list_categories, update_category
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -22,3 +22,23 @@ def post_category(
         current_user: User = Depends(require_role(["admin"])),
 ):
     return create_category(db, data, current_user)
+
+
+@router.patch("/{category_id}", response_model=CategoryResponse)
+def patch_category(
+        category_id: int,
+        data: CategoryUpdate,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(require_role(["admin"])),
+):
+    return update_category(db, category_id, data, current_user)
+
+
+@router.delete("/{category_id}", status_code=204)
+def remove_category(
+        category_id: int,
+        db: Session = Depends(get_db),
+        current_user: User = Depends(require_role(["admin"])),
+):
+    delete_category(db, category_id, current_user)
+    return None

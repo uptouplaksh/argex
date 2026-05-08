@@ -1,6 +1,10 @@
-from sqlalchemy.orm import Session
-from backend.app.models.audit_log import AuditLog
 from typing import Optional, Any
+
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.orm import Session
+
+from backend.app.models.audit_log import AuditLog
+
 
 def log_action(
     db: Session,
@@ -18,7 +22,7 @@ def log_action(
         action_type=action_type,
         entity_type=entity_type,
         entity_id=entity_id,
-        details=details,
+        details=jsonable_encoder(details) if details is not None else None,
     )
     db.add(audit_log_entry)
     db.commit()

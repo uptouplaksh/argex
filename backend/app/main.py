@@ -1,7 +1,7 @@
 import asyncio
 from fastapi import FastAPI
 
-from backend.app.api.routes import admin, auth, auction, bid, category, defender, roles, watchlist, ws, notifications
+from backend.app.api.routes import admin, auth, auction, bid, category, currency, defender, roles, watchlist, ws, notifications
 from backend.app.db.init_db import init_db
 from backend.app.services.websocket_manager import manager
 
@@ -23,6 +23,7 @@ app.include_router(defender.router)
 app.include_router(auction.router)
 app.include_router(bid.router)
 app.include_router(category.router)
+app.include_router(currency.router)
 app.include_router(watchlist.router)
 app.include_router(ws.router)
 app.include_router(notifications.router)

@@ -19,6 +19,10 @@ class Bid(Base):
     bidder = relationship("User")
     auction = relationship("Auction", back_populates="bids")
 
+    @property
+    def bidder_username(self):
+        return self.bidder.username if self.bidder else None
+
 
 Index("ix_bids_auction_amount", Bid.auction_id, Bid.amount.desc())
 Index("ix_bids_auction_created_at", Bid.auction_id, Bid.created_at.desc())

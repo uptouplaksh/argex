@@ -1,15 +1,16 @@
-import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from backend.app.models.auto_bid import AutoBid
 from backend.app.models.auction import Auction, AuctionStatus
+from backend.app.models.auto_bid import AutoBid
 from backend.app.models.bid import Bid
+from backend.app.services import logging_service, notification_service, auction_service, \
+    wallet_service  # Added auction_service
+from backend.app.services.currency_service import convert_from_usd, normalize_currency
 from backend.app.services.security_service import evaluate_bid_risk
-from backend.app.services import logging_service, notification_service, auction_service # Added auction_service
 from backend.app.services.websocket_manager import manager
 
 BID_INCREMENT = 1.0
@@ -17,6 +18,15 @@ ANTI_SNIPE_THRESHOLD_MINUTES = 2
 ANTI_SNIPE_EXTENSION_MINUTES = 2
 MAX_AUCTION_EXTENSIONS = 10
 MAX_AUTO_BID_ITERATIONS = 1000
+
+
+def format_auction_amount(amount: float, auction: Auction) -> str:
+    currency = normalize_currency(getattr(auction, "auction_currency", None))
+    try:
+        native_amount = float(amount or 0) if currency == "USD" else convert_from_usd(amount, currency)
+        return f"{currency} {native_amount:,.2f}"
+    except HTTPException:
+        return f"USD {float(amount or 0):,.2f}"
 
 
 def ensure_aware_utc(value: datetime) -> datetime:
@@ -51,6 +61,22 @@ def get_bid_history(db: Session, auction_id: int) -> list[Bid]:
     )
 
 
+def get_user_bid_stats(db: Session, current_user) -> dict[str, int]:
+    bids_placed = db.query(Bid.id).filter(Bid.bidder_id == current_user.id).count()
+    ended_auctions = db.query(Auction.id).filter(Auction.status == AuctionStatus.ended).all()
+    auctions_won = 0
+
+    for (auction_id,) in ended_auctions:
+        highest_bid = get_highest_bid(db, auction_id)
+        if highest_bid and highest_bid.bidder_id == current_user.id:
+            auctions_won += 1
+
+    return {
+        "bids_placed": bids_placed,
+        "auctions_won": auctions_won,
+    }
+
+
 def ensure_auction_accepts_bids(auction: Auction, now: datetime) -> None:
     if auction.status == AuctionStatus.upcoming and ensure_aware_utc(auction.start_time) <= now:
         auction.status = AuctionStatus.active
@@ -63,7 +89,7 @@ def ensure_auction_accepts_bids(auction: Auction, now: datetime) -> None:
         raise HTTPException(status_code=400, detail="Auction ended")
 
 
-async def maybe_extend_auction(auction: Auction, now: datetime) -> None: # Made async
+async def maybe_extend_auction(auction: Auction, now: datetime) -> None:  # Made async
     if auction.status != AuctionStatus.active:
         return
 
@@ -76,7 +102,7 @@ async def maybe_extend_auction(auction: Auction, now: datetime) -> None: # Made 
     if now >= threshold_time:
         auction.end_time = end_time + timedelta(minutes=ANTI_SNIPE_EXTENSION_MINUTES)
         auction.extension_count = extension_count + 1
-        
+
         # Broadcast TIME_EXTENDED event
         message = {
             "type": "TIME_EXTENDED",
@@ -86,7 +112,7 @@ async def maybe_extend_auction(auction: Auction, now: datetime) -> None: # Made 
         await manager.broadcast(auction.id, json.dumps(message))
 
 
-async def record_bid( # Already async
+async def record_bid(  # Already async
         db: Session,
         auction: Auction,
         bidder_id: int,
@@ -105,7 +131,7 @@ async def record_bid( # Already async
         is_auto=is_auto,
     )
     auction.current_price = amount
-    await maybe_extend_auction(auction, now) # Await maybe_extend_auction
+    await maybe_extend_auction(auction, now)  # Await maybe_extend_auction
     db.add(bid)
     db.flush()
 
@@ -114,7 +140,7 @@ async def record_bid( # Already async
             db=db,
             user_id=outbid_user_id,
             type="OUTBID",
-            message=f"You have been outbid in the auction for '{auction.title}'. The new bid is ${bid.amount}."
+            message=f"You have been outbid in the auction for '{auction.title}'. The new bid is {format_auction_amount(bid.amount, auction)}."
         )
         # Broadcast OUTBID event
         outbid_message = {
@@ -129,9 +155,12 @@ async def record_bid( # Already async
     # Existing NEW_BID broadcast
     new_bid_message = {
         "type": "NEW_BID",
+        "id": bid.id,
         "auction_id": auction.id,
         "amount": bid.amount,
         "bidder_id": bid.bidder_id,
+        "bidder_username": bid.bidder.username if bid.bidder else None,
+        "is_auto": bid.is_auto,
         "timestamp": bid.created_at.isoformat(),
     }
     await manager.broadcast(auction.id, json.dumps(new_bid_message))
@@ -161,7 +190,7 @@ def sync_auto_bid_after_bid(
         auto_bid.is_active = False
 
 
-async def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | None: # Already async
+async def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid | None:  # Already async
     final_bid = get_highest_bid(db, auction.id)
 
     for iteration in range(1, MAX_AUTO_BID_ITERATIONS + 1):
@@ -191,9 +220,15 @@ async def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid
         if not auto_bid:
             return final_bid
 
+        try:
+            wallet_service.ensure_bid_affordable(db, auto_bid.user, min(auto_bid.max_bid, next_amount), auction.id)
+        except HTTPException:
+            auto_bid.is_active = False
+            continue
+
         previous_price = auction.current_price
         original_end_time = auction.end_time
-        final_bid = await record_bid( # Await record_bid
+        final_bid = await record_bid(  # Await record_bid
             db,
             auction,
             auto_bid.user_id,
@@ -227,12 +262,12 @@ async def process_auto_bids(db: Session, auction: Auction, now: datetime) -> Bid
 
     # Check if auction ended after processing bid and potential extension
     if ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
-        await auction_service.handle_auction_end(db, auction) # Call new function
+        await auction_service.handle_auction_end(db, auction)  # Call new function
 
     raise HTTPException(status_code=400, detail="Auto-bid processing limit reached")
 
 
-async def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid: # Already async
+async def place_bid(db: Session, auction_id: int, amount: float, current_user) -> Bid:  # Already async
     if getattr(current_user, "is_blocked", False):
         raise HTTPException(status_code=403, detail="Your account has been blocked")
 
@@ -246,12 +281,17 @@ async def place_bid(db: Session, auction_id: int, amount: float, current_user) -
     now = utc_now()
     ensure_auction_accepts_bids(auction, now)
 
+    if auction.seller_id == current_user.id:
+        raise HTTPException(status_code=403, detail="You cannot bid on your own auction")
+
     if amount <= auction.current_price:
         raise HTTPException(status_code=400, detail="Bid must be higher than current price")
 
+    wallet_service.ensure_bid_affordable(db, current_user, amount, auction.id)
+
     previous_price = auction.current_price
     original_end_time = auction.end_time
-    bid = await record_bid(db, auction, current_user.id, amount, now, is_auto=False) # Await record_bid
+    bid = await record_bid(db, auction, current_user.id, amount, now, is_auto=False)  # Await record_bid
     logging_service.log_action(
         db=db,
         user_id=current_user.id,
@@ -275,14 +315,14 @@ async def place_bid(db: Session, auction_id: int, amount: float, current_user) -
 
     # Check if auction ended after processing bid and potential extension
     if ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
-        await auction_service.handle_auction_end(db, auction) # Call new function
+        await auction_service.handle_auction_end(db, auction)  # Call new function
 
     db.commit()
     db.refresh(final_bid)
     return final_bid
 
 
-async def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid: # Already async
+async def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:  # Already async
     if getattr(current_user, "is_blocked", False):
         raise HTTPException(status_code=403, detail="Your account has been blocked")
 
@@ -296,10 +336,15 @@ async def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:
     now = utc_now()
     ensure_auction_accepts_bids(auction, now)
 
+    if auction.seller_id == current_user.id:
+        raise HTTPException(status_code=403, detail="You cannot bid on your own auction")
+
     highest_bid = get_highest_bid(db, auction.id)
     user_is_highest = highest_bid is not None and highest_bid.bidder_id == current_user.id
     if data.max_bid <= auction.current_price and not user_is_highest:
         raise HTTPException(status_code=400, detail="Maximum bid must exceed current price")
+
+    wallet_service.ensure_bid_affordable(db, current_user, data.max_bid, auction.id)
 
     auto_bid = (
         db.query(AutoBid)
@@ -342,7 +387,7 @@ async def create_or_update_auto_bid(db: Session, data, current_user) -> AutoBid:
     )
 
     if auto_bid.is_active:
-        final_bid = await process_auto_bids(db, auction, now) # Await process_auto_bids
+        final_bid = await process_auto_bids(db, auction, now)  # Await process_auto_bids
         # Check if auction ended after processing auto-bids
         if final_bid and ensure_aware_utc(auction.end_time) <= now and auction.status != AuctionStatus.ended:
             await auction_service.handle_auction_end(db, auction)
@@ -370,14 +415,45 @@ def get_user_auto_bid(db: Session, auction_id: int, current_user) -> AutoBid:
     return auto_bid
 
 
-def user_auto_bid_enabled(db: Session, auction_id: int, current_user) -> bool:
-    return (
-        db.query(AutoBid.id)
+def disable_user_auto_bid(db: Session, auction_id: int, current_user) -> AutoBid:
+    auction_exists = db.query(Auction.id).filter(Auction.id == auction_id).first()
+    if not auction_exists:
+        raise HTTPException(status_code=404, detail="Auction not found")
+
+    auto_bid = (
+        db.query(AutoBid)
         .filter(
             AutoBid.auction_id == auction_id,
             AutoBid.user_id == current_user.id,
-            AutoBid.is_active.is_(True),
         )
+        .with_for_update()
         .first()
-        is not None
+    )
+    if not auto_bid:
+        raise HTTPException(status_code=404, detail="Auto-bid not found")
+
+    auto_bid.is_active = False
+    logging_service.log_action(
+        db=db,
+        user_id=current_user.id,
+        action_type="DISABLE_AUTO_BID",
+        entity_type="AUCTION",
+        entity_id=auction_id,
+        details={"max_bid": auto_bid.max_bid, "current_bid": auto_bid.current_bid},
+    )
+    db.commit()
+    db.refresh(auto_bid)
+    return auto_bid
+
+
+def user_auto_bid_enabled(db: Session, auction_id: int, current_user) -> bool:
+    return (
+            db.query(AutoBid.id)
+            .filter(
+                AutoBid.auction_id == auction_id,
+                AutoBid.user_id == current_user.id,
+                AutoBid.is_active.is_(True),
+            )
+            .first()
+            is not None
     )

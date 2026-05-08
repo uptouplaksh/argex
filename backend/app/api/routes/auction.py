@@ -16,6 +16,7 @@ from backend.app.services.auction_service import (
     get_auction_or_404,
     get_highest_bid,
     list_auctions,
+    list_user_auctions,
     update_auction,
 )
 
@@ -34,6 +35,14 @@ def create_auction(
 @router.get("/", response_model=list[AuctionResponse])
 def get_auctions(category_id: int | None = None, db: Session = Depends(get_db)):
     return list_auctions(db, category_id)
+
+
+@router.get("/mine", response_model=list[AuctionResponse])
+def get_my_auctions(
+        db: Session = Depends(get_db),
+        current_user: User = Depends(require_role(["seller"])),
+):
+    return list_user_auctions(db, current_user)
 
 
 @router.get("/{auction_id}", response_model=AuctionResponse)
@@ -70,5 +79,6 @@ def highest_bid(auction_id: int, db: Session = Depends(get_db)):
         auction_id=auction_id,
         amount=bid.amount,
         bidder_id=bid.bidder_id,
+        bidder_username=bid.bidder.username if bid.bidder else None,
         created_at=bid.created_at,
     )

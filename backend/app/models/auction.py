@@ -21,6 +21,7 @@ class Auction(Base):
     description = Column(String, nullable=True)
     starting_price = Column(Float, nullable=False)
     current_price = Column(Float, nullable=False)
+    auction_currency = Column(String(3), nullable=False, default="USD")
     seller_id = Column(Integer, ForeignKey("users.id"))
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=False, index=True)
     start_time = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

@@ -16,6 +16,7 @@ class BidResponse(BaseModel):
     auction_id: int
     new_price: float
     bidder_id: int
+    bidder_username: str | None = None
     created_at: datetime
     is_auto: bool = False
     user_auto_bid_enabled: bool = False
@@ -39,6 +40,12 @@ class BidHistoryResponse(BaseModel):
     id: int
     auction_id: int
     bidder_id: int
+    bidder_username: str | None = None
     amount: float
     created_at: datetime
     is_auto: bool
+
+
+class BidStatsResponse(BaseModel):
+    bids_placed: int
+    auctions_won: int

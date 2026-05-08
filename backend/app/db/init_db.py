@@ -1,13 +1,15 @@
 from backend.app.db.base import Base
+from backend.app.core.config import LOGIN_OTP_ENABLED
 from backend.app.db.session import engine
 from backend.app.models.auction import Auction
 from backend.app.models.auto_bid import AutoBid
 from backend.app.models.bid import Bid
 from backend.app.models.category import Category
 from backend.app.models.defender_log import DefenderActionLog  # noqa: F401 – registers table
+from backend.app.models.notification import Notification  # noqa: F401 – registers table
 from backend.app.models.security_incident import SecurityIncident
 from backend.app.models.seller_request import SellerRequest
-from backend.app.models.user import User
+from backend.app.models.user import LoginOtp, User
 from backend.app.models.watchlist import Watchlist
 
 
@@ -136,6 +138,13 @@ def ensure_bidding_engine_columns():
             ALTER TABLE auctions
             ADD COLUMN IF NOT EXISTS extension_count INTEGER NOT NULL DEFAULT 0;
 
+            ALTER TABLE auctions
+            ADD COLUMN IF NOT EXISTS auction_currency VARCHAR(3) NOT NULL DEFAULT 'USD';
+
+            UPDATE auctions
+            SET auction_currency = 'USD'
+            WHERE auction_currency IS NULL OR auction_currency = '';
+
             ALTER TABLE bids
             ADD COLUMN IF NOT EXISTS is_auto BOOLEAN NOT NULL DEFAULT FALSE;
 
@@ -177,6 +186,73 @@ def ensure_user_blocked_column():
         )
 
 
+def ensure_wallet_columns():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS account_balance FLOAT NOT NULL DEFAULT 10000.0;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS preferred_currency VARCHAR(3) NOT NULL DEFAULT 'USD';
+
+            UPDATE users
+            SET account_balance = 10000.0
+            WHERE account_balance IS NULL;
+
+            UPDATE users
+            SET preferred_currency = 'USD'
+            WHERE preferred_currency IS NULL OR preferred_currency = '';
+            """
+        )
+
+
+def ensure_verification_columns():
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS phone_number VARCHAR;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_verified BOOLEAN NOT NULL DEFAULT FALSE;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS security_pin_hash VARCHAR;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS pin_failed_attempts INTEGER NOT NULL DEFAULT 0;
+
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS pin_locked_until TIMESTAMP WITH TIME ZONE;
+
+            ALTER TABLE login_otps
+            ADD COLUMN IF NOT EXISTS purpose VARCHAR NOT NULL DEFAULT 'registration';
+
+            ALTER TABLE login_otps
+            ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0;
+
+            ALTER TABLE login_otps
+            ADD COLUMN IF NOT EXISTS resend_available_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW();
+            """
+        )
+
+        if not LOGIN_OTP_ENABLED:
+            connection.exec_driver_sql(
+                """
+                UPDATE users
+                SET is_verified = TRUE
+                WHERE is_verified = FALSE;
+                """
+            )
+
+
 def ensure_defender_action_type_enum():
     if engine.dialect.name != "postgresql":
         return
@@ -211,3 +287,5 @@ def init_db():
     ensure_bidding_engine_columns()
     ensure_user_risk_columns()
     ensure_user_blocked_column()
+    ensure_wallet_columns()
+    ensure_verification_columns()
