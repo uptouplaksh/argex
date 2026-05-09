@@ -12,6 +12,7 @@ from backend.app.services import logging_service, notification_service, auction_
 from backend.app.services.currency_service import convert_from_usd, normalize_currency
 from backend.app.services.security_service import evaluate_bid_risk
 from backend.app.services.websocket_manager import manager
+from backend.app.utils.privacy import public_bidder_username
 
 BID_INCREMENT = 1.0
 ANTI_SNIPE_THRESHOLD_MINUTES = 2
@@ -59,6 +60,19 @@ def get_bid_history(db: Session, auction_id: int) -> list[Bid]:
         .order_by(Bid.created_at.desc(), Bid.id.desc())
         .all()
     )
+
+
+def bid_history_payload(bid: Bid, viewer=None) -> dict:
+    username = bid.bidder.username if bid.bidder else None
+    return {
+        "id": bid.id,
+        "auction_id": bid.auction_id,
+        "bidder_id": bid.bidder_id,
+        "bidder_username": public_bidder_username(username, viewer),
+        "amount": bid.amount,
+        "created_at": bid.created_at,
+        "is_auto": bid.is_auto,
+    }
 
 
 def get_user_bid_stats(db: Session, current_user) -> dict[str, int]:
@@ -152,18 +166,25 @@ async def record_bid(  # Already async
         }
         await manager.broadcast(auction.id, json.dumps(outbid_message))
 
-    # Existing NEW_BID broadcast
-    new_bid_message = {
+    public_new_bid_message = {
         "type": "NEW_BID",
         "id": bid.id,
         "auction_id": auction.id,
         "amount": bid.amount,
         "bidder_id": bid.bidder_id,
-        "bidder_username": bid.bidder.username if bid.bidder else None,
+        "bidder_username": public_bidder_username(bid.bidder.username if bid.bidder else None),
         "is_auto": bid.is_auto,
         "timestamp": bid.created_at.isoformat(),
     }
-    await manager.broadcast(auction.id, json.dumps(new_bid_message))
+    privileged_new_bid_message = {
+        **public_new_bid_message,
+        "bidder_username": bid.bidder.username if bid.bidder else None,
+    }
+    await manager.broadcast_role_aware(
+        auction.id,
+        json.dumps(public_new_bid_message),
+        json.dumps(privileged_new_bid_message),
+    )
 
     return bid
 

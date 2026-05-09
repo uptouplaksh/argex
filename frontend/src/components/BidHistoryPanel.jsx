@@ -2,6 +2,7 @@ import useAuth from '../hooks/useAuth'
 import useCurrency from '../hooks/useCurrency'
 import { formatMoney, normalizeCurrency } from '../utils/currency'
 import { formatReadableDateTime } from '../utils/dateTime'
+import { formatBidderLabel } from '../utils/privacy'
 
 function getBidKey(bid) {
   return bid.id || `${bid.bidder_id}-${bid.amount}-${bid.created_at}`
@@ -41,7 +42,7 @@ function BidHistoryPanel({ auctionCurrency, bids = [], highlightedBidKey, isLoad
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-black text-app-text">
-                    {bid.bidder_username ? `@${bid.bidder_username}` : `Bidder ${bid.bidder_id}`}
+                    {formatBidderLabel(bid.bidder_username, bid.bidder_id, user?.role)}
                   </p>
                   <p className="mt-1 text-xs font-semibold text-slate-500">
                     {formatReadableDateTime(bid.created_at, 'Unknown time')}

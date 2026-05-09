@@ -6,6 +6,7 @@ import {getHighestBid} from '../services/auctionService'
 import {getAuctionStateClasses, getAuctionStatus} from '../utils/auctionStatus'
 import {formatAuctionMoney, normalizeCurrency} from '../utils/currency'
 import {formatReadableDateTime} from '../utils/dateTime'
+import {formatBidderLabel} from '../utils/privacy'
 import Button from './Button'
 import Reveal from './Reveal'
 
@@ -147,7 +148,7 @@ function AuctionCard({
                             <div>
                                 <p className="text-xs font-semibold text-slate-500">Winner</p>
                                 <p className="mt-1 text-sm font-black text-app-text dark:text-white">
-                                    {auctionResult?.bidder_username ? `@${auctionResult.bidder_username}` : auctionResult?.bidder_id ? `Bidder ${auctionResult.bidder_id}` : 'No winner'}
+                                    {auctionResult?.bidder_username || auctionResult?.bidder_id ? formatBidderLabel(auctionResult.bidder_username, auctionResult.bidder_id, user?.role) : 'No winner'}
                                 </p>
                             </div>
                             <div>

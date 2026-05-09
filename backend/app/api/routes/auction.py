@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from backend.app.db.session import get_db
+from backend.app.core.security import get_optional_current_user
 from backend.app.dependencies.rbac import require_role
 from backend.app.models.user import User
 from backend.app.schemas.auction import (
@@ -19,6 +20,7 @@ from backend.app.services.auction_service import (
     list_user_auctions,
     update_auction,
 )
+from backend.app.utils.privacy import public_bidder_username
 
 router = APIRouter(prefix="/auctions", tags=["Auctions"])
 
@@ -71,14 +73,19 @@ def delete_auction(
 
 
 @router.get("/{auction_id}/highest-bid", response_model=HighestBidResponse)
-def highest_bid(auction_id: int, db: Session = Depends(get_db)):
+def highest_bid(
+        auction_id: int,
+        db: Session = Depends(get_db),
+        current_user: User | None = Depends(get_optional_current_user),
+):
     bid = get_highest_bid(db, auction_id)
     if not bid:
         return HighestBidResponse(auction_id=auction_id)
+    username = bid.bidder.username if bid.bidder else None
     return HighestBidResponse(
         auction_id=auction_id,
         amount=bid.amount,
         bidder_id=bid.bidder_id,
-        bidder_username=bid.bidder.username if bid.bidder else None,
+        bidder_username=public_bidder_username(username, current_user),
         created_at=bid.created_at,
     )

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { getStoredToken } from '../services/tokenService'
 
 const WS_BASE_URL = import.meta.env.VITE_WS_BASE_URL || 'ws://localhost:8000'
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000]
@@ -42,7 +43,9 @@ function useAuctionWebSocket(auctionId, onEvent) {
       clearReconnectTimer()
       setStatus('connecting')
 
-      const socket = new WebSocket(`${WS_BASE_URL}/ws/auctions/${auctionId}`)
+      const token = getStoredToken()
+      const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : ''
+      const socket = new WebSocket(`${WS_BASE_URL}/ws/auctions/${auctionId}${tokenQuery}`)
       socketRef.current = socket
 
       socket.onopen = () => {

@@ -11,6 +11,7 @@ from backend.app.schemas.auction import AuctionCreate, AuctionUpdate
 from backend.app.services import logging_service, wallet_service
 from backend.app.services.currency_service import convert_to_usd, normalize_currency
 from backend.app.services.websocket_manager import manager
+from backend.app.utils.privacy import public_bidder_username
 
 
 def utc_now() -> datetime:
@@ -201,14 +202,19 @@ async def handle_auction_end(db: Session, auction: Auction):
     final_price = highest_bid.amount if highest_bid else auction.current_price
     wallet_service.settle_auction(db, auction, highest_bid)
 
-    message = {
+    winner_username = highest_bid.bidder.username if highest_bid and highest_bid.bidder else None
+    public_message = {
         "type": "AUCTION_ENDED",
         "auction_id": auction.id,
         "winner_id": winner_id,
-        "winner_username": highest_bid.bidder.username if highest_bid and highest_bid.bidder else None,
+        "winner_username": public_bidder_username(winner_username),
         "final_price": final_price,
     }
-    await manager.broadcast(auction.id, json.dumps(message))
+    privileged_message = {
+        **public_message,
+        "winner_username": winner_username,
+    }
+    await manager.broadcast_role_aware(auction.id, json.dumps(public_message), json.dumps(privileged_message))
 
     logging_service.log_action(
         db=db,

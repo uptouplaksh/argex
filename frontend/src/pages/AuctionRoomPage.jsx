@@ -14,6 +14,7 @@ import { cancelAuction, getAuction, getCategories, getHighestBid } from '../serv
 import { disableAutoBid, getAutoBid, getBidHistory, placeBid, upsertAutoBid } from '../services/bidService'
 import { formatAuctionMoney, formatMoney, normalizeCurrency } from '../utils/currency'
 import { formatReadableDateTime } from '../utils/dateTime'
+import { formatBidderLabel } from '../utils/privacy'
 
 function getTimeRemaining(endTime, now) {
   const end = new Date(endTime).getTime()
@@ -583,11 +584,9 @@ function AuctionRoomPage() {
                     <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">
                       Winning bidder{' '}
                       <span className="font-black text-app-text dark:text-white">
-                        {auctionResult?.bidder_username
-                          ? `@${auctionResult.bidder_username}`
-                          : auctionResult?.bidder_id
-                            ? `Bidder ${auctionResult.bidder_id}`
-                            : 'not available'}
+                        {auctionResult?.bidder_id || auctionResult?.bidder_username
+                          ? formatBidderLabel(auctionResult.bidder_username, auctionResult.bidder_id, user?.role)
+                          : 'not available'}
                       </span>{' '}
                       closed at {formatAuctionMoney(auctionResult?.amount || currentBid, auctionCurrency, rates, currency)}.
                     </p>
@@ -627,7 +626,7 @@ function AuctionRoomPage() {
               <h2 className="mt-1 text-2xl font-black text-app-text">{formatAuctionMoney(currentBid, auctionCurrency, rates, currency)}</h2>
               <p className="mt-2 text-sm text-slate-500">
                 {latestBid
-                  ? `Leading bidder: ${latestBid.bidder_username ? `@${latestBid.bidder_username}` : `Bidder ${latestBid.bidder_id}`}`
+                  ? `Leading bidder: ${formatBidderLabel(latestBid.bidder_username, latestBid.bidder_id, user?.role)}`
                   : 'No leading bidder yet'}
               </p>
               {['bidder', 'seller'].includes(user?.role) && user?.account_balance !== undefined ? (

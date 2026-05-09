@@ -46,6 +46,7 @@ def create_access_token(data: dict):
 
 
 security = HTTPBearer()
+optional_security = HTTPBearer(auto_error=False)
 
 
 def get_current_user(
@@ -90,5 +91,52 @@ def get_current_user(
 
     if LOGIN_OTP_ENABLED and not getattr(user, "is_verified", False):
         raise HTTPException(status_code=403, detail="Account verification required")
+
+    return user
+
+
+def get_optional_current_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(optional_security),
+    db: Session = Depends(get_db),
+):
+    if not credentials or credentials.scheme.lower() != "bearer":
+        return None
+
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        user = db.query(User).filter(User.id == int(user_id)).first()
+    except Exception:
+        return None
+
+    if not user:
+        return None
+
+    if LOGIN_OTP_ENABLED and not getattr(user, "is_verified", False):
+        return None
+
+    return user
+
+
+def get_user_from_token(db: Session, token: str | None):
+    if not token:
+        return None
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        if user_id is None:
+            return None
+        user = db.query(User).filter(User.id == int(user_id)).first()
+    except Exception:
+        return None
+
+    if not user:
+        return None
+
+    if LOGIN_OTP_ENABLED and not getattr(user, "is_verified", False):
+        return None
 
     return user

@@ -13,7 +13,9 @@ from backend.app.schemas.bid import (
     BidResponse,
     BidStatsResponse,
 )
+from backend.app.core.security import get_optional_current_user
 from backend.app.services.bid_service import (
+    bid_history_payload,
     create_or_update_auto_bid,
     disable_user_auto_bid,
     get_bid_history,
@@ -22,6 +24,7 @@ from backend.app.services.bid_service import (
     place_bid as place_bid_service,
     user_auto_bid_enabled,
 )
+from backend.app.utils.privacy import public_bidder_username
 
 router = APIRouter(prefix="/bids", tags=["Bids"])
 
@@ -67,7 +70,7 @@ async def place_bid(
         auction_id=auction_id,
         new_price=bid_record.amount,
         bidder_id=bid_record.bidder_id,
-        bidder_username=bid_record.bidder.username if bid_record.bidder else None,
+        bidder_username=public_bidder_username(bid_record.bidder.username if bid_record.bidder else None, current_user),
         created_at=bid_record.created_at,
         is_auto=bid_record.is_auto,
         user_auto_bid_enabled=user_auto_bid_enabled(db, auction_id, current_user),
@@ -83,5 +86,9 @@ def my_bid_stats(
 
 
 @router.get("/{auction_id}/history", response_model=list[BidHistoryResponse])
-def bid_history(auction_id: int, db: Session = Depends(get_db)):
-    return get_bid_history(db, auction_id)
+def bid_history(
+        auction_id: int,
+        db: Session = Depends(get_db),
+        current_user: User | None = Depends(get_optional_current_user),
+):
+    return [bid_history_payload(bid, current_user) for bid in get_bid_history(db, auction_id)]

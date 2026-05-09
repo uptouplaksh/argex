@@ -1,15 +1,25 @@
 import json
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Body
+from fastapi import APIRouter, Body, Depends, WebSocket, WebSocketDisconnect
+from sqlalchemy.orm import Session
+
+from backend.app.core.security import get_user_from_token
+from backend.app.db.session import get_db
 from backend.app.services.websocket_manager import manager
+from backend.app.utils.privacy import normalize_role
 
 router = APIRouter()
 
 @router.websocket("/ws/auctions/{auction_id}")
-async def websocket_endpoint(websocket: WebSocket, auction_id: int):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    auction_id: int,
+    db: Session = Depends(get_db),
+):
     """
     Handles WebSocket connections for auction rooms.
     """
-    await manager.connect(auction_id, websocket)
+    user = get_user_from_token(db, websocket.query_params.get("token"))
+    await manager.connect(auction_id, websocket, role=normalize_role(getattr(user, "role", None)))
     try:
         while True:
             data = await websocket.receive_text()
